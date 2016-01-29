@@ -171,6 +171,48 @@ public class AggregateMetadataTest extends CCMTestsSupport {
         assertThat(aggregate.toString()).isEqualTo(cqlAggregate);
     }
 
+    /**
+     * Test for JAVA-1046 / CASSANDRA-11064.
+     * <p/>
+     * TODO enable this test when CASSANDRA-11064 is fixed.
+     */
+    @Test(groups = "short", enabled = false)
+    public void should_parse_and_format_aggregate_with_composite_type() {
+        // given
+        DataType custom = DataType.custom(
+                "org.apache.cassandra.db.marshal.DynamicCompositeType(" +
+                        "s=>org.apache.cassandra.db.marshal.UTF8Type," +
+                        "i=>org.apache.cassandra.db.marshal.Int32Type)");
+        String cqlFunction = String.format(
+                "CREATE FUNCTION %s.id(i %s) " +
+                        "RETURNS NULL ON NULL INPUT " +
+                        "RETURNS %s " +
+                        "LANGUAGE java " +
+                        "AS 'return i;';", keyspace, custom, custom);
+        String cqlAggregate = String.format(
+                "CREATE AGGREGATE %s.ag() " +
+                        "SFUNC id " +
+                        "STYPE %s " +
+                        "INITCOND 's@foo:i@32';", keyspace, custom);
+        // when
+        session().execute(cqlFunction);
+        session().execute(cqlAggregate);
+        // then
+        KeyspaceMetadata keyspace = cluster().getMetadata().getKeyspace(this.keyspace);
+        FunctionMetadata stateFunc = keyspace.getFunction("id", custom);
+        AggregateMetadata aggregate = keyspace.getAggregate("ag");
+        assertThat(aggregate).isNotNull();
+        assertThat(aggregate.getSignature()).isEqualTo("ag()");
+        assertThat(aggregate.getSimpleName()).isEqualTo("ag");
+        assertThat(aggregate.getArgumentTypes()).isEmpty();
+        assertThat(aggregate.getFinalFunc()).isNull();
+        assertThat(aggregate.getInitCond()).isEqualTo("'s@foo:i@32'");
+        assertThat(aggregate.getReturnType()).isEqualTo(custom);
+        assertThat(aggregate.getStateFunc()).isEqualTo(stateFunc);
+        assertThat(aggregate.getStateType()).isEqualTo(custom);
+        assertThat(aggregate.toString()).isEqualTo(cqlAggregate);
+    }
+
     @Override
     public void onTestContextInitialized() {
         execute(

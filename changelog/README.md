@@ -1,5 +1,10 @@
 ## Changelog
 
+### 3.0.1
+
+- [bug] JAVA-1046: (Dynamic)CompositeTypes need to be parsed as string literal, not blob.
+
+
 ### 3.0.0
 
 - [bug] JAVA-1034: fix metadata parser for collections of custom types.
