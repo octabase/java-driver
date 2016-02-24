@@ -4,6 +4,7 @@
 
 - [bug] JAVA-994: Don't call on(Up|Down|Add|Remove) methods if Cluster is closed/closing.
 - [improvement] JAVA-805: Document that metrics are null until Cluster is initialized.
+- [bug] JAVA-1072: Defunct connection when setKeyspaceAsync call fails.
 
 ### 2.0.12
 
