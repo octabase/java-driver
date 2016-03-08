@@ -15,6 +15,7 @@
  */
 package com.datastax.driver.mapping;
 
+import com.codahale.metrics.Histogram;
 import com.datastax.driver.core.*;
 import com.datastax.driver.core.querybuilder.Delete;
 import com.datastax.driver.core.querybuilder.Insert;
@@ -209,8 +210,9 @@ public class Mapper<T> {
             }
             if (saveNullFields && value == null) {
                 MapperMetrics.EntityMetrics metrics = mapperMetrics.getEntityMetrics(entity.getClass());
-                metrics.nullFieldsHistogram.update(1);
-                long count = metrics.nullFieldsHistogram.getCount();
+                Histogram histogram = metrics.getNullFieldsHistogram();
+                histogram.update(1);
+                long count = histogram.getCount();
                 if (count > NULL_FIELDS_COUNT_WARNING_THRESHOLD) {
                     long now = System.nanoTime();
                     if (now > lastNullFieldsCountWarning + NULL_FIELDS_COUNT_WARNING_INTERVAL_NS) {

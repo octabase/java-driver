@@ -16,17 +16,14 @@
 package com.datastax.driver.mapping;
 
 import com.codahale.metrics.Histogram;
-import com.codahale.metrics.JmxReporter;
 import com.codahale.metrics.MetricRegistry;
 import com.codahale.metrics.SlidingTimeWindowReservoir;
 import com.datastax.driver.core.Cluster;
-import com.datastax.driver.core.Host;
-import com.datastax.driver.core.LifecycleAwareLatencyTracker;
-import com.datastax.driver.core.Statement;
 import com.google.common.base.Throwables;
 import com.google.common.cache.*;
 
 import java.util.concurrent.ExecutionException;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import static java.util.concurrent.TimeUnit.MINUTES;
 
@@ -44,65 +41,81 @@ import static java.util.concurrent.TimeUnit.MINUTES;
  */
 public class MapperMetrics {
 
-    static class EntityMetrics {
+    /**
+     * Statistics and metrics about a given entity.
+     */
+    public static class EntityMetrics {
 
-        // TODO configurable sliding window?
-        final Histogram nullFieldsHistogram = new Histogram(new SlidingTimeWindowReservoir(5, MINUTES));
+        private final Class<?> entityClass;
 
-    }
+        private final Histogram nullFieldsHistogram;
 
-    private final MetricRegistry registry = new MetricRegistry();
+        public EntityMetrics(Class<?> entityClass, Histogram nullFieldsHistogram) {
+            this.entityClass = entityClass;
+            this.nullFieldsHistogram = nullFieldsHistogram;
+        }
 
-    private final LoadingCache<Class<?>, EntityMetrics> metricsByEntity = CacheBuilder.newBuilder()
-            .expireAfterAccess(5, MINUTES)
-            .removalListener(new RemovalListener<Class<?>, EntityMetrics>() {
+        /**
+         * @return The entity class.
+         */
+        public Class<?> getEntityClass() {
+            return entityClass;
+        }
 
-                @Override
-                public void onRemoval(RemovalNotification<Class<?>, EntityMetrics> notification) {
-                    Class<?> entityClass = notification.getKey();
-                    if (entityClass != null)
-                        registry.remove(entityClass.getName() + "-null-fields");
-                }
-
-            })
-            .build(new CacheLoader<Class<?>, EntityMetrics>() {
-
-                @Override
-                public EntityMetrics load(Class<?> entityClass) throws Exception {
-                    EntityMetrics metrics = new EntityMetrics();
-                    registry.register(entityClass.getName() + "-null-fields", metrics.nullFieldsHistogram);
-                    return metrics;
-                }
-
-            });
-
-    private final JmxReporter jmxReporter;
-
-    MapperMetrics(Cluster cluster) {
-        if (cluster.getConfiguration().getMetricsOptions().isJMXReportingEnabled()) {
-            this.jmxReporter = JmxReporter.forRegistry(registry).inDomain(cluster.getClusterName() + "-mapper-metrics").build();
-            this.jmxReporter.start();
-            // a bit ugly but works
-            // a general-purpose lifecycle-aware thing would be better
-            cluster.register(new LifecycleAwareLatencyTracker() {
-                @Override
-                public void onRegister(Cluster cluster) {
-                }
-
-                @Override
-                public void onUnregister(Cluster cluster) {
-                    jmxReporter.stop();
-                }
-
-                @Override
-                public void update(Host host, Statement statement, Exception exception, long newLatencyNanos) {
-                }
-            });
-        } else {
-            this.jmxReporter = null;
+        /**
+         * @return the histogram for saved null fields.
+         */
+        public Histogram getNullFieldsHistogram() {
+            return nullFieldsHistogram;
         }
     }
 
+    private static final AtomicInteger COUNTER = new AtomicInteger(0);
+
+    private class EntityMetricsLoader extends CacheLoader<Class<?>, EntityMetrics> {
+
+        @Override
+        public EntityMetrics load(Class<?> entityClass) throws Exception {
+            // TODO configurable sliding window?
+            EntityMetrics metrics = new EntityMetrics(entityClass, new Histogram(new SlidingTimeWindowReservoir(5, MINUTES)));
+            registry.register(String.format("mapper-%s-%s-null-fields", id, entityClass.getName()), metrics.nullFieldsHistogram);
+            return metrics;
+        }
+
+    }
+
+    private class EntityMetricsRemovalListener implements RemovalListener<Class<?>, EntityMetrics> {
+
+        @Override
+        public void onRemoval(RemovalNotification<Class<?>, EntityMetrics> notification) {
+            Class<?> entityClass = notification.getKey();
+            if (entityClass != null)
+                registry.remove(String.format("mapper-%s-%s-null-fields", id, entityClass.getName()));
+        }
+
+    }
+
+    private final MetricRegistry registry;
+
+    // distinguish between different instances of this class
+    private final int id;
+
+    private final LoadingCache<Class<?>, EntityMetrics> metricsByEntity = CacheBuilder.newBuilder()
+            .expireAfterAccess(5, MINUTES)
+            .removalListener(new EntityMetricsRemovalListener())
+            .build(new EntityMetricsLoader());
+
+    MapperMetrics(Cluster cluster) {
+        registry = cluster.getMetrics().getRegistry();
+        id = COUNTER.incrementAndGet();
+    }
+
+    /**
+     * Gathers metrics about the given entity class.
+     *
+     * @param entityClass the entity class to gather metrics for.
+     * @return An {@link EntityMetrics} with metrics for the given entity class.
+     */
     public EntityMetrics getEntityMetrics(Class<?> entityClass) {
         EntityMetrics metrics = null;
         try {
@@ -112,4 +125,5 @@ public class MapperMetrics {
         }
         return metrics;
     }
+
 }
